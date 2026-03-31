@@ -1,0 +1,430 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MAKKAL VOICE — Web Voice Agent</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <style>
+    :root {
+      --primary: #4f46e5;
+      --primary-glow: rgba(79, 70, 229, 0.4);
+      --bg: #0f172a;
+      --text: #f8fafc;
+      --surface: #1e293b;
+      --success: #10b981;
+      --danger: #ef4444;
+    }
+    
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      overflow: hidden;
+    }
+
+    .container {
+      text-align: center;
+      max-width: 600px;
+      padding: 2rem;
+      z-index: 10;
+    }
+
+    h1 { font-size: 2.5rem; font-weight: 800; margin-bottom: 0.5rem; background: linear-gradient(135deg, #a8c0ff, #3f2b96); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    p { color: #94a3b8; font-size: 1.1rem; margin-bottom: 3rem; }
+
+    /* The Call Button */
+    .call-btn-container {
+      position: relative;
+      width: 150px;
+      height: 150px;
+      margin: 0 auto 3rem;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .call-btn {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      font-size: 2.5rem;
+      border: none;
+      cursor: pointer;
+      box-shadow: 0 0 30px var(--primary-glow);
+      transition: all 0.3s ease;
+      z-index: 2;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    .call-btn:hover {
+      transform: scale(1.05);
+      background: #4338ca;
+    }
+
+    .call-btn.active {
+      background: var(--danger);
+      box-shadow: 0 0 30px rgba(239, 68, 68, 0.4);
+      animation: pulse-danger 2s infinite;
+    }
+
+    /* Ripple Animation */
+    .ripple {
+      position: absolute;
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      background: var(--primary);
+      opacity: 0;
+      z-index: 1;
+    }
+
+    .call-btn-container.ringing .ripple {
+      animation: ripple 2s infinite;
+    }
+    
+    .call-btn-container.ringing .ripple:nth-child(2) {
+      animation-delay: 0.5s;
+    }
+
+    @keyframes ripple {
+      0% { transform: scale(1); opacity: 0.5; }
+      100% { transform: scale(3); opacity: 0; }
+    }
+
+    @keyframes pulse-danger {
+      0% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+      70% { box-shadow: 0 0 0 20px rgba(239, 68, 68, 0); }
+      100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0); }
+    }
+
+    /* Transcript Box */
+    .transcript-box {
+      background: var(--surface);
+      padding: 1.5rem;
+      border-radius: 12px;
+      min-height: 120px;
+      width: 100%;
+      text-align: left;
+      border: 1px solid #334155;
+      opacity: 0;
+      transform: translateY(20px);
+      transition: all 0.5s ease;
+      font-size: 1.2rem;
+      line-height: 1.5;
+    }
+
+    .transcript-box.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    .ai-bubble { color: #a8c0ff; font-weight: 600; margin-bottom: 0.5rem; }
+    .user-bubble { color: #10b981; font-style: italic; }
+    .status-text { margin-top: 1rem; color: #94a3b8; font-size: 0.9rem; text-align: center; }
+
+    /* Visualizer */
+    .visualizer {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      height: 40px;
+      gap: 4px;
+      margin-top: 1rem;
+      opacity: 0;
+    }
+
+    .visualizer.active { opacity: 1; }
+
+    .bar {
+      width: 4px;
+      height: 10px;
+      background: var(--primary);
+      border-radius: 2px;
+      animation: sound 0ms -800ms linear infinite alternate;
+    }
+
+    .visualizer.active .bar { animation-duration: 400ms; }
+
+    .bar:nth-child(1)  { animation-delay: -200ms; }
+    .bar:nth-child(2)  { animation-delay: -400ms; }
+    .bar:nth-child(3)  { animation-delay: -600ms; }
+    .bar:nth-child(4)  { animation-delay: -800ms; }
+    .bar:nth-child(5)  { animation-delay: -1000ms; }
+
+    @keyframes sound {
+      0% { height: 5px; opacity: 0.5; background: #a8c0ff; }
+      100% { height: 35px; opacity: 1; background: var(--primary); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Ambient Background -->
+  <div style="position: absolute; top: -20%; left: -10%; width: 50vw; height: 50vw; background: radial-gradient(circle, rgba(79,70,229,0.1) 0%, rgba(15,23,42,0) 70%); border-radius: 50%; z-index: 1;"></div>
+  
+  <div class="container">
+    <h1>MAKKAL VOICE</h1>
+    <p>Tap the button to register your complaint via voice.</p>
+
+    <!-- Interactive Call Button -->
+    <div class="call-btn-container" id="callContainer">
+      <div class="ripple"></div>
+      <div class="ripple"></div>
+      <button class="call-btn" id="callBtn">
+        <i class="fas fa-phone"></i>
+      </button>
+    </div>
+
+    <!-- Live Conversation UI -->
+    <div class="transcript-box" id="transcriptBox">
+      <div class="ai-bubble" id="aiText">Press the call button to begin.</div>
+      <div class="user-bubble" id="userText"></div>
+      <div class="visualizer" id="visualizer">
+        <div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div><div class="bar"></div>
+      </div>
+    </div>
+    <div class="status-text" id="statusText">System Ready</div>
+  </div>
+
+  <script>
+    // System Prompts
+    const prompts = {
+      en: {
+        welcome: "Press 1 for Tamil, 2 for Hindi, or 3 for English.", // Simplified for demo
+        langs: { '1': 'ta-IN', '2': 'hi-IN', '3': 'en-IN' },
+        langSelected: "Language selected. Please say your full name after the beep.",
+        askAddress: "Thank you. Please say your complete address including village or ward.",
+        askIssue: "Finally, describe your complaint or issue in detail after the beep.",
+        success: "Thank you. Your complaint has been registered. The department has been notified."
+      }
+    };
+
+    // State Variables
+    let isCallActive = false;
+    let currentStep = 'idle'; // idle, lang, name, address, issue, processing
+    let mediaRecorder;
+    let audioChunks = [];
+    let state = { lang: 'en-IN', name: '', address: '', issue: '' };
+
+    // DOM Elements
+    const callBtn = document.getElementById('callBtn');
+    const callContainer = document.getElementById('callContainer');
+    const aiText = document.getElementById('aiText');
+    const userText = document.getElementById('userText');
+    const visualizer = document.getElementById('visualizer');
+    const statusText = document.getElementById('statusText');
+    const transcriptBox = document.getElementById('transcriptBox');
+
+    // Synthesis Voice Setup
+    const synth = window.speechSynthesis;
+    let voices = [];
+    synth.onvoiceschanged = () => { voices = synth.getVoices(); };
+
+    function speakAI(text, lang = 'en-IN') {
+      return new Promise((resolve) => {
+        statusText.innerText = "AI speaking...";
+        aiText.innerText = text;
+        userText.innerText = "";
+        visualizer.classList.remove('active');
+        
+        if (synth.speaking) { synth.cancel(); }
+        
+        const utterance = new SpeechSynthesisUtterance(text);
+        utterance.lang = lang;
+        
+        // Try to pick a natural voice if available
+        const voice = voices.find(v => v.lang === lang && (v.name.includes('Google') || v.name.includes('Natural') || v.name.includes('Neural')));
+        if (voice) utterance.voice = voice;
+        
+        utterance.onend = () => {
+          resolve();
+        };
+        synth.speak(utterance);
+      });
+    }
+
+    function playBeep() {
+      const ctx = new (window.AudioContext || window.webkitAudioContext)();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.value = 800;
+      gain.gain.setValueAtTime(0.5, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.5);
+    }
+
+    // Audio Recording
+    async function startRecording(field) {
+      statusText.innerText = "Listening... Speak now";
+      visualizer.classList.add('active');
+      audioChunks = [];
+      
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      mediaRecorder = new MediaRecorder(stream);
+      
+      mediaRecorder.ondataavailable = e => {
+        if (e.data.size > 0) audioChunks.push(e.data);
+      };
+      
+      return new Promise((resolve) => {
+        mediaRecorder.onstop = async () => {
+          stream.getTracks().forEach(track => track.stop());
+          const audioBlob = new Blob(audioChunks, { type: 'audio/webm' });
+          resolve(audioBlob);
+        };
+        
+        mediaRecorder.start();
+        
+        // Stop automatically after silence or fixed time (simpler for demo)
+        setTimeout(() => {
+          if (mediaRecorder.state === 'recording') {
+            stopRecording();
+          }
+        }, 5000); 
+      });
+    }
+
+    function stopRecording() {
+      if (mediaRecorder && mediaRecorder.state === 'recording') {
+        mediaRecorder.stop();
+        visualizer.classList.remove('active');
+        statusText.innerText = "Processing...";
+      }
+    }
+
+    async function sendAudioToServer(blob, field, lang) {
+      try {
+        const url = `http://localhost:5000/api/twilio/web-voice-complaint?field=${field}&lang=${lang}`;
+        const response = await fetch(url, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/octet-stream' },
+          body: blob
+        });
+        const data = await response.json();
+        return data.transcript;
+      } catch (err) {
+        console.error(err);
+        return field === 'name' ? 'Citizen' : 'Audio received (fallback)'; // fallback for demo without Whisper API
+      }
+    }
+
+    // Call Flow logic
+    async function startCall() {
+      isCallActive = true;
+      transcriptBox.classList.add('visible');
+      callContainer.classList.add('ringing');
+      callBtn.innerHTML = '<i class="fas fa-phone-slash"></i>';
+      callBtn.classList.add('active');
+
+      // Step 1: Menu
+      currentStep = 'lang';
+      await speakAI(prompts.en.welcome, 'en-IN');
+      playBeep();
+      const langAudio = await startRecording('language');
+      
+      // Simulate digit extraction (in real life you'd use DTMF. Here we just assume English for the web demo, or send to transcribe)
+      // Since it's web, we just default to English for the UI demo unless they explicitly say "Tamil"
+      const langTranscript = await sendAudioToServer(langAudio, 'language', 'en-IN');
+      userText.innerText = `You: ${langTranscript}`;
+      state.lang = langTranscript.toLowerCase().includes('tamil') ? 'ta-IN' : 'en-IN';
+
+      // Step 2: Name
+      currentStep = 'name';
+      await speakAI(prompts.en.langSelected, state.lang); // simplified fallback to EN prompts text for demo code brevity
+      playBeep();
+      const nameAudio = await startRecording('name');
+      const nameText = await sendAudioToServer(nameAudio, 'name', state.lang);
+      userText.innerText = `You: "${nameText}"`;
+      state.name = nameText;
+
+      if (!isCallActive) return;
+
+      // Step 3: Address
+      currentStep = 'address';
+      await speakAI(prompts.en.askAddress, state.lang);
+      playBeep();
+      const addressAudio = await startRecording('address');
+      const addressText = await sendAudioToServer(addressAudio, 'address', state.lang);
+      userText.innerText = `You: "${addressText}"`;
+      state.address = addressText;
+
+      if (!isCallActive) return;
+
+      // Step 4: Issue
+      currentStep = 'issue';
+      await speakAI(prompts.en.askIssue, state.lang);
+      playBeep();
+      const issueAudio = await startRecording('issue');
+      const issueText = await sendAudioToServer(issueAudio, 'issue', state.lang);
+      userText.innerText = `You: "${issueText}"`;
+      state.issue = issueText;
+
+      if (!isCallActive) return;
+
+      // Step 5: Submission
+      currentStep = 'processing';
+      await speakAI("Please wait while our AI analyzes your complaint.", state.lang);
+      statusText.innerText = "Thinking & routing to department...";
+      
+      try {
+        const response = await fetch('http://localhost:5000/api/twilio/web-submit-complaint', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(state)
+        });
+        const data = await response.json();
+        
+        await speakAI(`Thank you. Your complaint tracking ID is ${data.trackingId}. The ${data.department} has been notified.`, state.lang);
+      } catch (err) {
+        await speakAI("Sorry, there was an error submitting the complaint.");
+      }
+
+      endCall();
+    }
+
+    function endCall() {
+      isCallActive = false;
+      currentStep = 'idle';
+      if (synth.speaking) synth.cancel();
+      stopRecording();
+      
+      callContainer.classList.remove('ringing');
+      callBtn.innerHTML = '<i class="fas fa-phone"></i>';
+      callBtn.classList.remove('active');
+      statusText.innerText = "Call ended";
+    }
+
+    // Events
+    callBtn.addEventListener('click', async () => {
+      if (!isCallActive) {
+        // Request mic permissions first
+        try {
+          await navigator.mediaDevices.getUserMedia({ audio: true });
+          startCall();
+        } catch (err) {
+          alert('Microphone access is required for the web call.');
+        }
+      } else {
+        endCall();
+      }
+    });
+  </script>
+</body>
+</html>

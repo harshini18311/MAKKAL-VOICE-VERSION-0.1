@@ -1,0 +1,16 @@
+{
+  "type": "Feature",
+  "properties": { "name": "Tamil Nadu (service area — approximate bounding polygon)" },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [
+        [76.12, 8.05],
+        [80.4, 8.05],
+        [80.4, 13.55],
+        [76.12, 13.55],
+        [76.12, 8.05]
+      ]
+    ]
+  }
+}

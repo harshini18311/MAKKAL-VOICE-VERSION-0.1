@@ -1,0 +1,16 @@
+Error: Cannot find module 'axios'
+Require stack:
+- H:\tnwise\antigravity\ai-rural-voice-complaint\ai-services\aiService.js
+- H:\tnwise\antigravity\ai-rural-voice-complaint\backend\routes\complaintRoutes.js
+- H:\tnwise\antigravity\ai-rural-voice-complaint\backend\server.js
+- H:\tnwise\antigravity\ai-rural-voice-complaint\backend\[eval]
+    at Module._resolveFilename (node:internal/modules/cjs/loader:1456:15)
+    at defaultResolveImpl (node:internal/modules/cjs/loader:1066:19)
+    at resolveForCJSWithHooks (node:internal/modules/cjs/loader:1071:22)
+    at Module._load (node:internal/modules/cjs/loader:1242:25)
+    at wrapModuleLoad (node:internal/modules/cjs/loader:255:19)
+    at Module.require (node:internal/modules/cjs/loader:1556:12)
+    at require (node:internal/modules/helpers:152:16)
+    at Object.<anonymous> (H:\tnwise\antigravity\ai-rural-voice-complaint\ai-services\aiService.js:1:15)
+    at Module._compile (node:internal/modules/cjs/loader:1812:14)
+    at Object..js (node:internal/modules/cjs/loader:1943:10)
