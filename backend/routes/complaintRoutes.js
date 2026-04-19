@@ -18,8 +18,18 @@ const { appendAuditLog } = require('../services/auditService');
 const { runStages4567, parseClientGps, descriptionShingles, categoryToDept } = require('../services/verificationRunner');
 const config = require('../config/verificationConfig');
 
+// Civic_issue integration: Fraud detection + Image forensics
+const { detectComplaintFraud } = require('../utils/fraudDetection');
+const { getHfFraudScore } = require('../utils/huggingFraudService');
+const { inspectComplaintPhoto } = require('../utils/imageForensics');
+const { validateImageComplaint } = require('../utils/imageComplaintValidator');
+const { getClipAlignmentScore } = require('../utils/clipVisionService');
+
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024 }
+});
 
 function buildTrackingId(category) {
   const dept = categoryToDept(category);
@@ -51,296 +61,174 @@ router.post(
   complaintDeviceLimiter,
   firewallSanitizeMiddleware,
   earlyVerificationMiddleware,
-  upload.single('audio'),
+  upload.fields([{ name: 'audio', maxCount: 1 }, { name: 'photo', maxCount: 1 }]),
   async (req, res) => {
-    console.log('Incoming Complaint Submission:', { bodyKeys: Object.keys(req.body || {}), file: !!req.file, user: req.user.id });
-    try {
-      let text = req.body.text;
-      if (req.file) {
-        text = await transcribeAudio(req.file.buffer);
-      }
-      if (!text) {
-        return res.status(400).json({ error: 'Either text or audio is required' });
-      }
+    const audioFile = req.files?.audio?.[0] || null;
+    const photoFile = req.files?.photo?.[0] || null;
+    const user = req.citizenUser;
+    const name = req.body.name || user.name;
+    const location = req.body.location || 'Unknown';
 
-      const user = req.citizenUser;
-      const name = req.body.name || user.name;
-      const location = req.body.location || 'Unknown';
+    try {
+      // 1. Initial Data Extraction (Fast)
+      let text = req.body.text;
+      if (audioFile) {
+        text = await transcribeAudio(audioFile.buffer);
+      }
+      if (!text) return res.status(400).json({ error: 'Either text or audio is required' });
 
       // Pre-AI Validation: Length and Gibberish detection
       const cleanText = text.trim();
-      const isTooShort = cleanText.length < 10;
-      const isKeyboardSmash = /[^aeiouy\s]{6,}/i.test(cleanText) || /(.)\1{4,}/.test(cleanText);
+      console.log('[DEBUG] Input Text:', cleanText);
+      const isTooShort = cleanText.length < 3; // Reduced from 5 to 3 for ultra-concise regional words
+      
+      // Better Gibberish detection: Only apply "consonant-heavy" check to Latin text
+      const isLatin = /^[A-Z0-9\s.,!?-]+$/i.test(cleanText);
+      const isKeyboardSmash = isLatin 
+        ? (/[^aeiouy\s]{8,}/i.test(cleanText) || /(.)\1{5,}/.test(cleanText))
+        : (/(.)\1{6,}/.test(cleanText)); // More lenient for Non-Latin scripts
 
       if (isTooShort || isKeyboardSmash) {
-        console.warn(`[Pre-AI Rejection] Rejected potential nonsense: "${cleanText}" (short=${isTooShort}, smash=${isKeyboardSmash})`);
-        return res.status(422).json({
-          decision: 'FAKE',
-          error: 'invalid description',
-          trackingId: `REJ-${uuidv4().slice(0, 8).toUpperCase()}`
-        });
+        return res.status(422).json({ decision: 'FAKE', error: 'invalid description', trackingId: `REJ-${uuidv4().slice(0, 8).toUpperCase()}` });
       }
 
-      const aiResult = await analyzeComplaint(text, name, location);
+      // 2. Parallel Core AI & Data Fetching
+      const photoBuffer = photoFile ? photoFile.buffer : (req.body.image?.startsWith('data:image') ? Buffer.from(req.body.image.split(',')[1], 'base64') : null);
+      
+      const [aiResult, recentComplaints, photoResult, ruleResult] = await Promise.all([
+        analyzeComplaint(text, name, location),
+        Complaint.find({ createdAt: { $gte: new Date(Date.now() - 14 * 24 * 60 * 60 * 1000) } }).sort({ createdAt: -1 }).limit(50).select('complaintText textEmbedding trackingId'),
+        photoBuffer ? inspectComplaintPhoto(photoBuffer) : Promise.resolve({ ok: false }),
+        detectComplaintFraud({ Complaint, userId: user._id?.toString(), text, location, sourceIp: req.ip })
+      ]);
+
+      console.log('[DEBUG] AI Analysis Result:', aiResult);
 
       if (aiResult.category === 'Irrelevant') {
-        console.warn(`[Complaint Rejection] Irrelevant complaint blocked: "${text}"`);
-        return res.status(422).json({
-          decision: 'FAKE',
-          error: 'invalid description',
-          trackingId: `REJ-${uuidv4().slice(0, 8).toUpperCase()}`
+        console.warn('[Complaint Rejected] Category: Irrelevant', { text, aiResult });
+        return res.status(422).json({ decision: 'FAKE', error: 'invalid description', trackingId: `REJ-${uuidv4().slice(0, 8).toUpperCase()}` });
+      }
+
+      // 3. Dependent Parallel Tasks (Vision Alignment + Verification Stages)
+      const [clipScore, hfResult, stage456] = await Promise.all([
+        photoBuffer ? getClipAlignmentScore(photoBuffer, text) : Promise.resolve(null),
+        getHfFraudScore(text, recentComplaints),
+        runStages4567({ user, body: { ...req.body, text }, aiResult, stage23: req.verificationStage23 })
+      ]);
+
+      // 4. Semantic Gateway & Fraud Compilation
+      const imageValidation = photoBuffer ? await validateImageComplaint({
+        complaintText: text, imageCaption: photoResult.caption || '', detectedObjects: photoResult.detectedObjects || [],
+        photoHash: photoResult.hash, hasExifData: !!photoResult.capturedAt, visualSignature: photoResult.visualSignature || {}, clipScore
+      }) : { alignmentScore: 100, isFraud: false, fraudScore: 0 };
+
+      // STRICTOR REJECTION: High Fraud Score or Semantic Mismatch
+      if (imageValidation.isFraud && imageValidation.fraudScore >= 85) {
+        return res.status(400).json({ decision: 'FAKE', error: `Verification Failed: ${imageValidation.reason}` });
+      }
+      
+      const matchPercentage = imageValidation.alignmentScore;
+      if (photoBuffer && matchPercentage < 40) { // Increased from 20 to 40
+        return res.status(400).json({ 
+          decision: 'FAKE', 
+          error: `Verification Failed: Image mismatch (${matchPercentage}% coherence). Please attach a real photo of the specific issue.` 
         });
       }
 
-      const stage456 = await runStages4567({
-        user,
-        body: req.body,
-        aiResult,
-        stage23: req.verificationStage23
-      });
+      // Fraud score aggregation
+      let fraudScore = Math.max(ruleResult.fraudScore, hfResult.score);
+      let fraudReasons = [...ruleResult.fraudReasons, ...(hfResult.reasons || [])];
+      
+      if (imageValidation.isFraud) {
+        fraudScore = Math.min(fraudScore + imageValidation.fraudScore, 100);
+        fraudReasons.push(`[IMAGE] ${imageValidation.reason}`);
+      } else if (photoBuffer) {
+        fraudReasons.push(`[IMAGE] ✓ Visual evidence aligns (${matchPercentage}%).`);
+      }
 
-      const {
-        results456,
-        flags,
-        finalScore,
-        decision,
-        textEmb,
-        imageEmb,
-        bestDuplicate,
-        shingles
-      } = stage456;
+      if (matchPercentage < 60 && photoBuffer) { // Flag if borderline
+        fraudScore = Math.max(fraudScore, 65);
+        fraudReasons.push(`[SEMANTIC] Borderline coherence (${matchPercentage}%).`);
+      }
 
-      const gps = parseClientGps(req.body);
-      const geoLocation =
-        gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lng)
-          ? { type: 'Point', coordinates: [gps.lng, gps.lat] }
-          : undefined;
-
-      const stageResults = {
-        stage1: { status: 'PASS', flags: [], contribution: 100 },
-        stage2: req.verificationStage23.results.stage2,
-        stage3: req.verificationStage23.results.stage3,
-        stage4: results456.stage4,
-        stage5: results456.stage5,
-        stage6: results456.stage6
+      const fraudFields = {
+        fraudScore: Math.min(fraudScore, 100),
+        fraudStatus: fraudScore >= 75 ? 'Flagged' : fraudScore >= 45 ? 'Suspicious' : 'Clean',
+        fraudReasons,
+        sourceIp: req.ip,
+        textEmbedding: hfResult.embedding || null,
+        photoHash: photoResult.hash,
+        photoCapturedAt: photoResult.capturedAt || null,
+        photoGeo: photoResult.gps || null
       };
 
-      const allFlags = [...(req.verificationStage23.flags || []), ...flags];
+      // 5. Final Decision & Storage
+      const { finalScore, decision, textEmb, imageEmb, bestDuplicate, shingles } = stage456;
+      
+      // Override decision if fraud score is critical
+      let finalDecision = decision;
+      if (fraudScore >= 90 && decision !== 'DUPLICATE') finalDecision = 'FAKE';
 
-      const auditEntries = [
-        { stage: 1, name: 'firewall', flags: [], partialScore: 100 },
-        { stage: 2, name: 'identity_trust', flags: stageResults.stage2.flags, partialScore: stageResults.stage2.contribution },
-        { stage: 3, name: 'geo_exif', flags: stageResults.stage3.flags, partialScore: stageResults.stage3.contribution },
-        { stage: 4, name: 'ai_content', flags: results456.stage4.flags, partialScore: results456.stage4.contribution },
-        { stage: 5, name: 'duplicate', flags: results456.stage5.flags, partialScore: results456.stage5.contribution },
-        { stage: 6, name: 'behaviour', flags: results456.stage6.flags, partialScore: results456.stage6.contribution }
-      ];
+      const trackingId = finalDecision === 'FAKE' ? `REJ-${uuidv4().slice(0, 12)}` : (finalDecision === 'DUPLICATE' ? `DUP-${uuidv4().slice(0, 8)}` : buildTrackingId(aiResult.category));
+      
+      const gps = parseClientGps(req.body);
+      const geoLocation = gps ? { type: 'Point', coordinates: [gps.lng, gps.lat] } : undefined;
 
-      if (decision === 'DUPLICATE' && bestDuplicate?.id) {
-        const existing = await Complaint.findById(bestDuplicate.id).lean();
-        const trackingId = existing?.trackingId || 'unknown';
-        const dupComplaint = await Complaint.create({
-          user: user._id,
-          name,
-          location,
-          complaintText: text,
-          category: aiResult.category || 'Other',
-          priority: aiResult.priority || 'Medium',
-          summary: aiResult.summary || text.substring(0, 100),
-          image: req.body.image,
-          emailDraft: aiResult.emailDraft,
-          trackingId: `DUP-${uuidv4().slice(0, 8)}`,
-          verificationScore: finalScore,
-          verificationDecision: 'DUPLICATE',
-          flags: allFlags,
-          fingerprint: req.body.fingerprint,
-          exifData: req.exifData,
-          geoLocation,
-          lat: gps?.lat,
-          lng: gps?.lng,
-          gpsCapturedAt: gps?.gpsCapturedAt ? new Date(gps.gpsCapturedAt) : undefined,
-          ipAddress: req.ip,
-          embeddings: { text: textEmb || [], image: imageEmb || [] },
-          linkedComplaintId: bestDuplicate.id,
-          duplicateSimilarity: bestDuplicate.sim,
-          departmentCode: categoryToDept(aiResult.category),
-          descriptionShingles: shingles,
-          verificationDetails: stageResults,
-          status: 'Merged'
-        });
+      const complaintData = {
+        user: user._id, name, location, complaintText: text, category: aiResult.category, priority: aiResult.priority, 
+        summary: aiResult.summary, image: req.body.image, emailDraft: aiResult.emailDraft, trackingId,
+        verificationScore: finalScore, verificationDecision: finalDecision, flags: [...(req.verificationStage23.flags || []), ...stage456.flags],
+        fingerprint: req.body.fingerprint, exifData: req.exifData, geoLocation, lat: gps?.lat, lng: gps?.lng, ipAddress: req.ip,
+        embeddings: { text: textEmb || [], image: imageEmb || [] }, departmentCode: categoryToDept(aiResult.category), 
+        descriptionShingles: shingles, verificationDetails: { ...req.verificationStage23.results, ...stage456.results456 },
+        status: finalDecision === 'FAKE' ? 'Rejected' : (finalDecision === 'DUPLICATE' ? 'Merged' : 'Pending'),
+        ...fraudFields
+      };
 
-        await appendAuditLog({
-          complaintId: dupComplaint._id,
-          stageResults,
-          finalScore,
-          decision: 'DUPLICATE',
-          entries: auditEntries
-        });
+      const complaint = await Complaint.create(complaintData);
 
-        return res.status(200).json({
-          merged: true,
-          duplicate: true,
-          linkedTrackingId: trackingId,
-          message: 'This report matches an existing case. You will receive updates on the original tracking ID.',
-          trackingId: dupComplaint.trackingId,
-          verificationScore: finalScore,
-          flags: allFlags
-        });
-      }
-
-      if (decision === 'RELATED') {
-        const trackingId = buildTrackingId(aiResult.category);
-        const rel = await Complaint.create({
-          user: user._id,
-          name,
-          location,
-          complaintText: text,
-          category: aiResult.category || 'Other',
-          priority: aiResult.priority || 'Medium',
-          summary: aiResult.summary || text.substring(0, 100),
-          image: req.body.image,
-          emailDraft: aiResult.emailDraft,
-          trackingId,
-          verificationScore: finalScore,
-          verificationDecision: 'RELATED',
-          flags: allFlags,
-          fingerprint: req.body.fingerprint,
-          exifData: req.exifData,
-          geoLocation,
-          lat: gps?.lat,
-          lng: gps?.lng,
-          gpsCapturedAt: gps?.gpsCapturedAt ? new Date(gps.gpsCapturedAt) : undefined,
-          ipAddress: req.ip,
-          embeddings: { text: textEmb || [], image: imageEmb || [] },
-          linkedComplaintId: bestDuplicate?.id,
-          duplicateSimilarity: bestDuplicate?.sim,
-          departmentCode: categoryToDept(aiResult.category),
-          descriptionShingles: shingles,
-          verificationDetails: stageResults,
-          status: 'Related'
-        });
-
-        await appendAuditLog({
-          complaintId: rel._id,
-          stageResults,
-          finalScore,
-          decision: 'RELATED',
-          entries: auditEntries
-        });
-
-        if (bestDuplicate?.id) {
-          const linked = await Complaint.findById(bestDuplicate.id).lean();
-          console.log(`[RELATED] Notify existing case ${linked?.trackingId} about related submission ${rel.trackingId}`);
-        }
-
-        return res.status(201).json({
-          ...rel.toObject(),
-          related: true,
-          emailSent: false,
-          verificationScore: finalScore,
-          flags: allFlags
-        });
-      }
-
-      if (decision === 'FAKE') {
-        const trackingId = `REJ-${uuidv4().slice(0, 12)}`;
-        const fake = await Complaint.create({
-          user: user._id,
-          name,
-          location,
-          complaintText: text,
-          category: aiResult.category || 'Other',
-          priority: aiResult.priority || 'Medium',
-          summary: aiResult.summary || text.substring(0, 100),
-          image: req.body.image,
-          emailDraft: aiResult.emailDraft,
-          trackingId,
-          verificationScore: finalScore,
-          verificationDecision: 'FAKE',
-          flags: allFlags,
-          fingerprint: req.body.fingerprint,
-          exifData: req.exifData,
-          geoLocation,
-          lat: gps?.lat,
-          lng: gps?.lng,
-          gpsCapturedAt: gps?.gpsCapturedAt ? new Date(gps.gpsCapturedAt) : undefined,
-          ipAddress: req.ip,
-          embeddings: { text: textEmb || [], image: imageEmb || [] },
-          departmentCode: categoryToDept(aiResult.category),
-          descriptionShingles: shingles,
-          verificationDetails: stageResults,
-          status: 'Rejected'
-        });
-
-        await appendAuditLog({
-          complaintId: fake._id,
-          stageResults,
-          finalScore,
-          decision: 'FAKE',
-          entries: auditEntries
-        });
-
-        await applyFakeTrustPenalty(user._id);
-
-        return res.status(422).json({
-          error: 'Submission did not pass verification.',
-          trackingId: fake.trackingId,
-          verificationScore: finalScore,
-          flags: allFlags,
-          decision: 'FAKE'
-        });
-      }
-
-      const trackingId = buildTrackingId(aiResult.category);
-      const complaint = await Complaint.create({
-        user: user._id,
-        name,
-        location,
-        complaintText: text,
-        category: aiResult.category || 'Other',
-        priority: aiResult.priority || 'Medium',
-        summary: aiResult.summary || text.substring(0, 100),
-        image: req.body.image,
-        emailDraft: aiResult.emailDraft,
-        trackingId,
-        verificationScore: finalScore,
-        verificationDecision: decision === 'REAL' ? 'REAL' : 'HUMAN_REVIEW',
-        flags: allFlags,
-        fingerprint: req.body.fingerprint,
-        exifData: req.exifData,
-        geoLocation,
-        lat: gps?.lat,
-        lng: gps?.lng,
-        gpsCapturedAt: gps?.gpsCapturedAt ? new Date(gps.gpsCapturedAt) : undefined,
-        ipAddress: req.ip,
-        embeddings: { text: textEmb || [], image: imageEmb || [] },
-        departmentCode: categoryToDept(aiResult.category),
-        descriptionShingles: shingles,
-        verificationDetails: stageResults,
-        status: decision === 'REAL' ? 'Pending' : 'QueuedReview'
-      });
-
-      await appendAuditLog({
-        complaintId: complaint._id,
-        stageResults,
-        finalScore,
-        decision: complaint.verificationDecision,
-        entries: auditEntries
-      });
-
-      let emailResult = { success: false };
-      if (decision === 'REAL') {
-        emailResult = await sendEmailNotification(complaint);
-      }
-
-      res.status(201).json({
+      // 6. Respond Fast (Wait only for DB write)
+      const responsePayload = {
         ...complaint.toObject(),
-        emailSent: emailResult?.success || false,
-        recipientEmail: emailResult?.recipient,
-        verificationScore: finalScore,
-        flags: allFlags,
-        decision: complaint.verificationDecision
+        trackingId,
+        decision: finalDecision,
+        emailSent: finalDecision === 'REAL', // Optimistic for UI
+      };
+
+      if (finalDecision === 'DUPLICATE') {
+        const existing = await Complaint.findById(bestDuplicate?.id).select('trackingId');
+        responsePayload.linkedTrackingId = existing?.trackingId;
+        responsePayload.merged = true;
+      }
+
+      res.status(finalDecision === 'FAKE' ? 422 : 201).json(responsePayload);
+
+      // 7. Background Tasks (Post-Response)
+      process.nextTick(async () => {
+        try {
+          // Audit Log
+          const auditEntries = [
+            { stage: 1, name: 'firewall', flags: [], partialScore: 100 },
+            { stage: 2, name: 'trust', flags: req.verificationStage23.flags || [], partialScore: req.verificationStage23.results.stage2.contribution },
+            { stage: 3, name: 'geo', flags: req.verificationStage23.flags || [], partialScore: req.verificationStage23.results.stage3.contribution },
+            { stage: 4, name: 'ai_ml', flags: stage456.flags, partialScore: stage456.results456.stage4.contribution }
+          ];
+          await appendAuditLog({ complaintId: complaint._id, stageResults: complaint.verificationDetails, finalScore, decision: finalDecision, entries: auditEntries });
+
+          // Email Notification
+          if (finalDecision === 'REAL') {
+             await sendEmailNotification(complaint);
+          }
+
+          // Penalties
+          if (finalDecision === 'FAKE') {
+            await applyFakeTrustPenalty(user._id);
+          }
+        } catch (bgErr) {
+          console.error('[Background Task Error]:', bgErr);
+        }
       });
+
     } catch (error) {
       console.error('Complaint processing error:', error);
       res.status(500).json({ error: 'Failed to process complaint' });
@@ -391,7 +279,7 @@ router.get('/audit/:complaintId', authMiddleware, adminOnly, async (req, res) =>
 // ═══════════════════════════════════════════════════════════════
 router.get('/departments/summary', authMiddleware, adminOnly, async (req, res) => {
   try {
-    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const oneDayAgo = new Date(Date.now() - 1 * 24 * 60 * 60 * 1000);
     
     const summary = await Complaint.aggregate([
       {
@@ -413,7 +301,7 @@ router.get('/departments/summary', authMiddleware, adminOnly, async (req, res) =
                 {
                   $and: [
                     { $in: ['$status', ['Pending', 'QueuedReview', 'InProgress']] },
-                    { $lte: ['$createdAt', sevenDaysAgo] }
+                    { $lte: ['$createdAt', oneDayAgo] }
                   ]
                 },
                 1,
@@ -441,7 +329,7 @@ router.get('/by-department/:category', authMiddleware, adminOnly, async (req, re
     const complaints = await Complaint.find({ category })
       .populate('user', 'name email')
       .sort({ createdAt: -1 })
-      .select('trackingId name location complaintText summary category priority status createdAt resolvedAt departmentResponse resolutionImage escalations verificationDecision verificationScore image emailDraft flags');
+      .select('trackingId name location complaintText summary category priority status createdAt resolvedAt departmentResponse resolutionImage escalations verificationDecision verificationScore image emailDraft flags fraudScore fraudStatus fraudReasons');
     res.json(complaints);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -449,7 +337,7 @@ router.get('/by-department/:category', authMiddleware, adminOnly, async (req, re
 });
 
 // ═══════════════════════════════════════════════════════════════
-// ADMIN: Escalate — raise question to department (complaint > 7 days)
+// ADMIN: Escalate — raise question to department (complaint > 1 day)
 // ═══════════════════════════════════════════════════════════════
 router.post('/:id/escalate', authMiddleware, adminOnly, async (req, res) => {
   try {
@@ -461,11 +349,11 @@ router.post('/:id/escalate', authMiddleware, adminOnly, async (req, res) => {
     const complaint = await Complaint.findById(req.params.id);
     if (!complaint) return res.status(404).json({ error: 'Complaint not found' });
 
-    // Check if complaint is older than 7 days
+    // Check if complaint is older than 1 day
     const ageMs = Date.now() - new Date(complaint.createdAt).getTime();
-    const sevenDaysMs = 7 * 24 * 60 * 60 * 1000;
-    if (ageMs < sevenDaysMs) {
-      return res.status(400).json({ error: 'Can only escalate complaints older than 7 days' });
+    const oneDayMs = 1 * 24 * 60 * 60 * 1000;
+    if (ageMs < oneDayMs) {
+      return res.status(400).json({ error: 'Can only escalate complaints older than 1 day' });
     }
 
     // Check if already resolved
@@ -560,7 +448,7 @@ router.get('/department/my', authMiddleware, departmentOnly, async (req, res) =>
     const complaints = await Complaint.find({ category: dept })
       .populate('user', 'name email phone')
       .sort({ createdAt: -1 })
-      .select('trackingId name location complaintText summary category priority status createdAt resolvedAt departmentResponse resolutionImage escalations verificationDecision image emailDraft');
+      .select('trackingId name location complaintText summary category priority status createdAt resolvedAt departmentResponse resolutionImage escalations verificationDecision image emailDraft fraudScore fraudStatus fraudReasons');
     res.json(complaints);
   } catch (e) {
     res.status(500).json({ error: e.message });

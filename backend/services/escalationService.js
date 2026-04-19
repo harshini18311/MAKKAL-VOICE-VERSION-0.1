@@ -1,6 +1,6 @@
 /**
  * Escalation Service — handles retry-failure handoffs, supervisor CC,
- * and daily digest emails for unresolved tickets > 48 hours.
+ * and daily digest emails for unresolved tickets > 24 hours.
  */
 
 const Complaint = require('../models/Complaint');
@@ -95,11 +95,11 @@ This complaint requires IMMEDIATE attention. It has been automatically flagged f
 }
 
 /**
- * Query unresolved tickets older than 48 hours.
+ * Query unresolved tickets older than 24 hours.
  * @returns {Promise<Array>} — list of stale complaints
  */
-async function getUnresolvedTickets48h() {
-  const cutoff = new Date(Date.now() - 48 * 60 * 60 * 1000);
+async function getUnresolvedTickets24h() {
+  const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
   return Complaint.find({
     status: { $in: ['Pending', 'QueuedReview'] },
@@ -122,7 +122,7 @@ function buildDigestEmail(tickets) {
   if (tickets.length === 0) {
     return {
       subject: `[MAKKAL VOICE] Daily Digest — ${now} — ✅ No unresolved tickets`,
-      body: 'All complaints filed more than 48 hours ago have been resolved. Great work!'
+      body: 'All complaints filed more than 24 hours ago have been resolved. Great work!'
     };
   }
 
@@ -136,7 +136,7 @@ function buildDigestEmail(tickets) {
 
   return {
     subject: `[MAKKAL VOICE] Daily Digest — ${now} — ${tickets.length} unresolved (${criticalCount} Critical, ${highCount} High)`,
-    body: `UNRESOLVED COMPLAINTS — OLDER THAN 48 HOURS
+    body: `UNRESOLVED COMPLAINTS — OLDER THAN 24 HOURS
 =============================================
 Date: ${now}
 Total: ${tickets.length} tickets
@@ -157,7 +157,7 @@ Tickets with Critical severity require immediate attention.`
  */
 async function sendDailyDigestEmail() {
   try {
-    const tickets = await getUnresolvedTickets48h();
+    const tickets = await getUnresolvedTickets24h();
     const { subject, body } = buildDigestEmail(tickets);
 
     if (!process.env.SMTP_USER || !process.env.SMTP_PASS) {
@@ -219,7 +219,7 @@ function startDailyDigestScheduler() {
 module.exports = {
   buildAgentHandoffTwiML,
   handleCriticalSeverityCC,
-  getUnresolvedTickets48h,
+  getUnresolvedTickets24h,
   buildDigestEmail,
   sendDailyDigestEmail,
   startDailyDigestScheduler

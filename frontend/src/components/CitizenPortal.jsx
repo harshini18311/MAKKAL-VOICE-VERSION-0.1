@@ -1,10 +1,20 @@
 import React, { useState, useRef } from 'react';
 import axios from 'axios';
-import { Mic, Square, Send, CheckCircle, MapPin, Navigation, Camera, X, Phone } from 'lucide-react';
+import { Mic, Square, Send, CheckCircle, MapPin, Navigation, Camera, X, Phone, Brain, Sparkles } from 'lucide-react';
 import { translations } from '../utils/translations';
 import { reverseGeocode, isWithinTamilNaduBounds } from '../utils/geoUtils';
 import MapPicker from './MapPicker';
 import AICallButton from './AICallButton';
+
+const loaderMessages = [
+  "AI is analyzing your complaint...",
+  "Scanning image for visual evidence...",
+  "Translating dialect into official records...",
+  "Identifying civic department...",
+  "Calculating priority & urgency...",
+  "Verifying semantic alignment...",
+  "Finalizing your secure submission..."
+];
 
 export default function CitizenPortal({ lang }) {
   const [activeTab, setActiveTab] = useState('aicall'); // aicall, voice, or text
@@ -17,6 +27,19 @@ export default function CitizenPortal({ lang }) {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDetecting, setIsDetecting] = useState(false);
   const [result, setResult] = useState(null);
+  const [loaderIndex, setLoaderIndex] = useState(0);
+
+  React.useEffect(() => {
+    let interval;
+    if (isSubmitting) {
+      interval = setInterval(() => {
+        setLoaderIndex((prev) => (prev + 1) % loaderMessages.length);
+      }, 2000);
+    } else {
+      setLoaderIndex(0);
+    }
+    return () => clearInterval(interval);
+  }, [isSubmitting]);
   
   const t = translations[lang] || translations.en;
   
@@ -231,7 +254,7 @@ export default function CitizenPortal({ lang }) {
       setResult(data);
     } catch (error) {
       const d = error.response?.data;
-      if (d?.decision === 'FAKE' && d?.trackingId) {
+      if (d?.decision === 'FAKE') {
         setResult({ rejected: true, ...d });
       } else {
         alert(d?.error || 'Failed to submit complaint');
@@ -314,6 +337,48 @@ export default function CitizenPortal({ lang }) {
                 }}>
                   {result.emailDraft}
                 </pre>
+              </>
+            )}
+
+            {/* Fraud Detection Result */}
+            {typeof result.fraudScore === 'number' && (
+              <>
+                <hr style={{ margin: '1rem 0', borderColor: 'var(--border)' }} />
+                <p><strong>Complaint Authenticity Check:</strong></p>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '0.5rem' }}>
+                  <span className={
+                    result.fraudStatus === 'Flagged' ? 'fraud-badge fraud-flagged' :
+                    result.fraudStatus === 'Suspicious' ? 'fraud-badge fraud-suspicious' :
+                    'fraud-badge fraud-clean'
+                  }>
+                    {result.fraudStatus || 'Clean'}
+                  </span>
+                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                    Score: {result.fraudScore}/100
+                  </span>
+                </div>
+                <div className="fraud-bar-track" style={{ marginTop: '0.5rem' }}>
+                  <div 
+                    className="fraud-bar-fill"
+                    style={{ 
+                      width: `${result.fraudScore}%`,
+                      background: result.fraudScore >= 61 ? 'var(--danger)' : result.fraudScore >= 31 ? '#f59e0b' : 'var(--secondary)'
+                    }}
+                  />
+                </div>
+                {(result.fraudReasons || []).length > 0 && (
+                  <div style={{ marginTop: '0.75rem', background: 'rgba(0,0,0,0.03)', padding: '0.75rem', borderRadius: '0.4rem', fontSize: '0.8rem' }}>
+                    <strong>Detection Signals:</strong>
+                    <ul style={{ margin: '0.25rem 0 0', paddingLeft: '1.25rem' }}>
+                      {result.fraudReasons.map((r, i) => (
+                        <li key={i} style={{ marginBottom: '0.2rem', color: r.startsWith('[AI]') ? '#7c3aed' : 'var(--text-main)' }}>{r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <p style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                  Verified by AI + rule-based fraud detection system
+                </p>
               </>
             )}
           </div>
@@ -589,6 +654,32 @@ export default function CitizenPortal({ lang }) {
               />
               
               <div style={{ width: '50px' }} /> {/* Spacer */}
+            </div>
+          </div>
+        )}
+        {isSubmitting && (
+          <div className="ai-loader-overlay">
+            <div className="ai-loader-card">
+              <div className="ai-brain-container">
+                <div className="ai-brain-pulse"></div>
+                <Brain color="var(--primary)" size={52} strokeWidth={1.5} />
+                <Sparkles 
+                  color="var(--warning)" 
+                  size={24} 
+                  style={{ position: 'absolute', top: -10, right: -10, animation: 'bounce 2s infinite' }} 
+                />
+              </div>
+              <div className="ai-status-text">
+                <div className="animate-fade-in" key={loaderIndex}>
+                  {loaderMessages[loaderIndex]}
+                </div>
+              </div>
+              <div className="ai-scanner">
+                <div className="ai-scanner-bar"></div>
+              </div>
+              <div className="ai-status-sub" style={{ opacity: 0.6, fontSize: '0.75rem', letterSpacing: '0.05em', textTransform: 'uppercase' }}>
+                Agentic Processing Platform
+              </div>
             </div>
           </div>
         )}

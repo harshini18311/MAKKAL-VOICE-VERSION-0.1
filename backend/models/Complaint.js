@@ -64,7 +64,7 @@ const complaintSchema = new mongoose.Schema({
     enum: ['Critical', 'High', 'Medium', 'Low'],
     default: 'Medium'
   },
-  estimatedResolutionDays: { type: Number, default: 7 },
+  estimatedResolutionDays: { type: Number, default: 1 },
   department: { type: String },               // Full department name
 
   // Enhancement 1-3: Telephony + Data Collection
@@ -75,7 +75,22 @@ const complaintSchema = new mongoose.Schema({
   structuredData: { type: Object },           // { name_en, name_original, address_en, district, ward, pincode, issue_en, ... }
 
   // Enhancement 5: Full classification result
-  classificationData: { type: Object }        // { category, severity, department, departmentCode, estimatedResolutionDays, ... }
+  classificationData: { type: Object },       // { category, severity, department, departmentCode, estimatedResolutionDays, ... }
+
+  // Fraud Detection (from Civic_issue integration)
+  fraudScore: { type: Number, default: 0, min: 0, max: 100 },
+  fraudStatus: { type: String, enum: ['Clean', 'Suspicious', 'Flagged'], default: 'Clean' },
+  fraudReasons: [{ type: String }],
+  textEmbedding: [{ type: Number }],
+  sourceIp: { type: String },
+
+  // Image Forensics (from Civic_issue integration)
+  photoHash: { type: String },
+  photoCapturedAt: { type: String },
+  photoGeo: {
+    lat: { type: Number },
+    lng: { type: Number }
+  }
 }, { timestamps: true });
 
 complaintSchema.index({ geoLocation: '2dsphere' }, { sparse: true });

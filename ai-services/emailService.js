@@ -28,27 +28,44 @@ async function sendEmailNotification(complaint) {
     }
 
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
       host: 'smtp.gmail.com',
       port: 587,
-      secure: false,
+      secure: false, // upgrades to STARTTLS
       auth: {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS?.replace(/\s/g, '')
       },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      tls: {
+        rejectUnauthorized: false
+      }
     });
+
+    const attachments = [];
+    let htmlContent = complaint.emailDraft ? 
+      `<div style="font-family: serif; white-space: pre-wrap; font-size: 1.1rem; border: 1px solid #ccc; padding: 2rem;">${complaint.emailDraft.replace(/\n/g, '<br/>')}</div>` : 
+      `<h2>New Complaint Registered</h2><p>${complaint.summary}</p>`;
+
+    if (complaint.image) {
+      const base64Data = complaint.image.split('base64,').pop();
+      attachments.push({
+        filename: `evidence-${complaint.trackingId}.jpg`,
+        content: base64Data,
+        encoding: 'base64',
+        cid: 'evidenceImage'
+      });
+      htmlContent += `<br/><br/><div style="padding: 1rem; border-top: 1px solid #ddd;">
+        <h3 style="color: #4f46e5; margin-bottom: 1rem;">Citizen's Original Evidence:</h3>
+        <img src="cid:evidenceImage" style="max-width: 100%; max-height: 400px; border-radius: 8px; border: 1px solid #ccc;" alt="Complaint Evidence" />
+      </div>`;
+    }
 
     const mailOptions = {
       from: process.env.SMTP_USER,
       to: recipient,
       subject: `OFFICIAL COMPLAINT: ${complaint.category} Issue - Tracking ID: ${complaint.trackingId}`,
       text: complaint.emailDraft || `AI Summary: ${complaint.summary}\n\nOriginal Complaint: ${complaint.complaintText}`,
-      html: complaint.emailDraft ? 
-        `<div style="font-family: serif; white-space: pre-wrap; font-size: 1.1rem; border: 1px solid #ccc; padding: 2rem;">${complaint.emailDraft.replace(/\n/g, '<br/>')}</div>` : 
-        `<h2>New Complaint Registered</h2><p>${complaint.summary}</p>`
+      html: htmlContent,
+      attachments
     };
 
     await transporter.sendMail(mailOptions);
@@ -72,7 +89,6 @@ async function sendOTPEmail(email, otp) {
     }
 
     const transporter = nodemailer.createTransport({
-      service: 'gmail',
       host: 'smtp.gmail.com',
       port: 587,
       secure: false,
@@ -80,9 +96,9 @@ async function sendOTPEmail(email, otp) {
         user: process.env.SMTP_USER,
         pass: process.env.SMTP_PASS?.replace(/\s/g, '')
       },
-      connectionTimeout: 10000,
-      greetingTimeout: 10000,
-      socketTimeout: 15000
+      tls: {
+        rejectUnauthorized: false
+      }
     });
 
     const mailOptions = {

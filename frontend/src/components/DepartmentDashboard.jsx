@@ -12,6 +12,33 @@ export default function DepartmentDashboard() {
   const [updating, setUpdating] = useState(false);
   const [escalationData, setEscalationData] = useState({});
   const [updatingEscalation, setUpdatingEscalation] = useState(null);
+  const [expandedRows, setExpandedRows] = useState({});
+
+  const toggleExpand = (id) => setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+
+  const getFraudBadgeStyle = (status, score) => {
+    const match = 100 - (score || 0);
+    if (status === 'Flagged' || match < 40) return {
+      background: 'rgba(239,68,68,0.1)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.25)'
+    };
+    if (status === 'Suspicious' || match < 70) return {
+      background: 'rgba(245,158,11,0.1)', color: '#d97706', border: '1px solid rgba(245,158,11,0.25)'
+    };
+    return { background: 'rgba(16,185,129,0.1)', color: '#059669', border: '1px solid rgba(16,185,129,0.25)' };
+  };
+
+  const getMatchLabel = (status) => {
+    if (status === 'Flagged') return '⚠ Review';
+    if (status === 'Suspicious') return '~ Suspect';
+    return '✓ Clear';
+  };
+
+  const getFraudBarColor = (score) => {
+    const match = 100 - score;
+    if (match <= 39) return 'linear-gradient(90deg, #ef4444, #dc2626)';
+    if (match <= 69) return 'linear-gradient(90deg, #f59e0b, #d97706)';
+    return 'linear-gradient(90deg, #10b981, #059669)';
+  };
 
   const user = JSON.parse(localStorage.getItem('user') || '{}');
   const token = localStorage.getItem('token');
@@ -162,6 +189,8 @@ export default function DepartmentDashboard() {
   const pending = complaints.filter(c => ['Pending', 'QueuedReview'].includes(c.status));
   const inProgress = complaints.filter(c => c.status === 'InProgress');
   const resolved = complaints.filter(c => c.status === 'Resolved');
+  const flagged = complaints.filter(c => c.fraudStatus === 'Flagged');
+  const fraudRatio = complaints.length > 0 ? Math.round((flagged.length / complaints.length) * 100) : 0;
 
   return (
     <div style={{ marginTop: '1.5rem' }} className="animate-fade-in">
@@ -180,22 +209,22 @@ export default function DepartmentDashboard() {
       </div>
 
       {/* Stats Row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
-        <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: '700', color: 'var(--primary)' }}>{complaints.length}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Total Complaints</div>
-        </div>
-        <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: '700', color: '#dc2626' }}>{pending.length}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Pending</div>
-        </div>
-        <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: '700', color: '#d97706' }}>{inProgress.length}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>In Progress</div>
-        </div>
-        <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center' }}>
-          <div style={{ fontSize: '2rem', fontWeight: '700', color: '#059669' }}>{resolved.length}</div>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Resolved</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+        {[
+          { label: 'Total',       value: complaints.length, color: 'var(--primary)' },
+          { label: 'Pending',     value: pending.length,    color: '#dc2626' },
+          { label: 'In Progress', value: inProgress.length, color: '#d97706' },
+          { label: 'Resolved',    value: resolved.length,   color: '#059669' },
+        ].map(stat => (
+          <div key={stat.label} className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: `4px solid ${stat.color}` }}>
+            <div style={{ fontSize: '2.2rem', fontWeight: '800', color: stat.color, fontFamily: 'Plus Jakarta Sans, sans-serif', lineHeight: 1 }}>{stat.value}</div>
+            <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.4rem' }}>{stat.label}</div>
+          </div>
+        ))}
+        <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: `4px solid ${flagged.length > 0 ? '#f59e0b' : '#10b981'}` }}>
+          <div style={{ fontSize: '2.2rem', fontWeight: '800', color: flagged.length > 0 ? '#f59e0b' : '#10b981', fontFamily: 'Plus Jakarta Sans, sans-serif', lineHeight: 1 }}>{fraudRatio}%</div>
+          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.4rem' }}>Fraud Flagged</div>
+          <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>{flagged.length} of {complaints.length}</div>
         </div>
       </div>
 
@@ -295,9 +324,9 @@ export default function DepartmentDashboard() {
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Tracking ID</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Date Filed</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Citizen</th>
-              <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Location</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Summary</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Priority</th>
+              <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Image Analysis</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Status</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Days Open</th>
               <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Actions</th>
@@ -306,56 +335,119 @@ export default function DepartmentDashboard() {
           <tbody>
             {complaints.length === 0 ? (
               <tr><td colSpan="9" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>No complaints assigned to your department yet.</td></tr>
-            ) : complaints.map(c => (
-              <tr key={c._id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.15s' }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'rgba(79, 70, 229, 0.03)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
-                <td style={{ padding: '0.85rem 1rem', fontWeight: '600', fontSize: '0.85rem', fontFamily: 'monospace' }}>{c.trackingId}</td>
-                <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{new Date(c.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
-                <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{c.name || c.user?.name || 'Anonymous'}</td>
-                <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', maxWidth: '150px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.location || 'N/A'}</td>
-                <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.summary || c.complaintText?.substring(0, 80)}</td>
-                <td style={{ padding: '0.85rem 1rem' }}>
-                  <span style={{ fontSize: '0.75rem', fontWeight: '600', color: priorityColor(c.priority) }}>{c.priority}</span>
-                </td>
-                <td style={{ padding: '0.85rem 1rem' }}>
-                  <span style={{
-                    padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '600',
-                    ...statusBadge(c.status)
-                  }}>
-                    {c.status}
-                  </span>
-                  {c.escalations && c.escalations.length > 0 && c.status !== 'Resolved' && (
-                    <span style={{ marginLeft: '0.35rem', fontSize: '0.7rem' }}>⚠️</span>
-                  )}
-                </td>
-                <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', fontWeight: '500' }}>
-                  <span style={{ color: daysAgo(c.createdAt) > 7 ? '#dc2626' : 'var(--text-main)' }}>
-                    {c.status === 'Resolved' ? '—' : `${daysAgo(c.createdAt)}d`}
-                  </span>
-                </td>
-                <td style={{ padding: '0.85rem 1rem' }}>
-                  {c.status === 'Resolved' ? (
-                    <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: '500' }}>✅ Done</span>
-                  ) : c.status === 'Rejected' || c.status === 'Merged' ? (
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>
-                  ) : (
-                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
-                      {c.status !== 'InProgress' && (
-                        <button className="btn dept-action-btn" style={{ background: '#fef3c7', color: '#92400e', padding: '0.25rem 0.5rem', fontSize: '0.7rem', border: '1px solid #fcd34d' }}
-                          onClick={() => updateStatus(c._id, 'InProgress')}>
-                          In Progress
-                        </button>
+            ) : complaints.map(c => {
+              const score = typeof c.fraudScore === 'number' ? c.fraudScore : null;
+              const matchPct = score !== null ? 100 - score : null;
+              const isExpanded = expandedRows[c._id];
+              return (
+                <React.Fragment key={c._id}>
+                  <tr style={{ borderBottom: isExpanded ? 'none' : '1px solid var(--border)', transition: 'background 0.15s' }}
+                      onMouseEnter={e => e.currentTarget.style.background = 'rgba(79, 70, 229, 0.03)'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                    <td style={{ padding: '0.85rem 1rem', fontWeight: '600', fontSize: '0.85rem', fontFamily: 'monospace' }}>{c.trackingId}</td>
+                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{new Date(c.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</td>
+                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{c.name || c.user?.name || 'Anonymous'}</td>
+                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{c.summary || c.complaintText?.substring(0, 80)}</td>
+                    <td style={{ padding: '0.85rem 1rem' }}>
+                      <span style={{ fontSize: '0.75rem', fontWeight: '600', color: priorityColor(c.priority) }}>{c.priority}</span>
+                    </td>
+                    {/* Image Analysis Column */}
+                    <td style={{ padding: '0.85rem 1rem', minWidth: '130px' }}>
+                      {score !== null ? (() => {
+                        const match = matchPct;
+                        const badgeStyle = getFraudBadgeStyle(c.fraudStatus, score);
+                        const barColor = getFraudBarColor(score);
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                              <span style={{
+                                display: 'inline-block', padding: '0.15rem 0.5rem',
+                                borderRadius: '999px', fontSize: '0.68rem', fontWeight: '700',
+                                whiteSpace: 'nowrap', letterSpacing: '0.02em', ...badgeStyle
+                              }}>
+                                {getMatchLabel(c.fraudStatus)}
+                              </span>
+                              <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-main)', marginLeft: 'auto' }}>
+                                {match}%
+                              </span>
+                            </div>
+                            <div style={{ height: '5px', borderRadius: '99px', background: 'var(--border)', overflow: 'hidden' }}>
+                              <div style={{ height: '100%', width: `${match}%`, background: barColor, borderRadius: '99px', transition: 'width 0.6s ease' }} />
+                            </div>
+                            <button
+                              style={{ background: 'none', border: 'none', color: 'var(--primary)', fontSize: '0.68rem', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left', padding: 0, opacity: 0.8 }}
+                              onClick={() => toggleExpand(c._id)}
+                            >
+                              {isExpanded ? '▲ Hide' : '▼ Details'}
+                            </button>
+                          </div>
+                        );
+                      })() : (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>
                       )}
-                      <button className="btn dept-action-btn" style={{ background: '#d1fae5', color: '#065f46', padding: '0.25rem 0.5rem', fontSize: '0.7rem', border: '1px solid #6ee7b7' }}
-                        onClick={() => setSelectedComplaint(c)}>
-                        Resolve
-                      </button>
-                    </div>
+                    </td>
+                    <td style={{ padding: '0.85rem 1rem' }}>
+                      <span style={{
+                        padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '600',
+                        ...statusBadge(c.status)
+                      }}>
+                        {c.status}
+                      </span>
+                      {c.escalations && c.escalations.length > 0 && c.status !== 'Resolved' && (
+                        <span style={{ marginLeft: '0.35rem', fontSize: '0.7rem' }}>⚠️</span>
+                      )}
+                    </td>
+                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', fontWeight: '500' }}>
+                      <span style={{ color: daysAgo(c.createdAt) > 7 ? '#dc2626' : 'var(--text-main)' }}>
+                        {c.status === 'Resolved' ? '—' : `${daysAgo(c.createdAt)}d`}
+                      </span>
+                    </td>
+                    <td style={{ padding: '0.85rem 1rem' }}>
+                      {c.status === 'Resolved' ? (
+                        <span style={{ fontSize: '0.75rem', color: '#059669', fontWeight: '500' }}>✅ Done</span>
+                      ) : c.status === 'Rejected' || c.status === 'Merged' ? (
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                          {c.status !== 'InProgress' && (
+                            <button className="btn dept-action-btn" style={{ background: '#fef3c7', color: '#92400e', padding: '0.25rem 0.5rem', fontSize: '0.7rem', border: '1px solid #fcd34d' }}
+                              onClick={() => updateStatus(c._id, 'InProgress')}>
+                              In Progress
+                            </button>
+                          )}
+                          <button className="btn dept-action-btn" style={{ background: '#d1fae5', color: '#065f46', padding: '0.25rem 0.5rem', fontSize: '0.7rem', border: '1px solid #6ee7b7' }}
+                            onClick={() => setSelectedComplaint(c)}>
+                            Resolve
+                          </button>
+                        </div>
+                      )}
+                    </td>
+                  </tr>
+                  {isExpanded && (
+                    <tr style={{ borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.01)' }}>
+                      <td colSpan="9" style={{ padding: 0 }}>
+                        <div className="fraud-panel animate-fade-in" style={{ padding: '1rem 2rem' }}>
+                          <strong style={{ fontSize: '0.85rem', display: 'block', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
+                            🔍 AI Analysis — {matchPct}% visual match
+                          </strong>
+                          {(c.fraudReasons || []).length > 0 ? (
+                            <ul>
+                              {c.fraudReasons.map((reason, i) => (
+                                <li key={i} className={reason.startsWith('[IMAGE]') || reason.startsWith('[SEMANTIC]') ? 'ai-signal' : ''}>
+                                  {reason}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : (
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>✅ No suspicious patterns detected.</p>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                </td>
-              </tr>
-            ))}
+                </React.Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -371,6 +463,14 @@ export default function DepartmentDashboard() {
             <p style={{ fontSize: '0.85rem', marginBottom: '1rem', color: 'var(--text-muted)' }}>
               {selectedComplaint.summary}
             </p>
+            {selectedComplaint.image && (
+              <div style={{ marginBottom: '1rem', padding: '0.75rem', background: 'rgba(0,0,0,0.02)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <p style={{ fontSize: '0.8rem', fontWeight: '600', marginBottom: '0.5rem', color: 'var(--text-main)' }}>Citizen's Original Evidence 📸</p>
+                <div style={{ textAlign: 'center' }}>
+                  <img src={selectedComplaint.image} alt="Original Evidence" style={{ maxWidth: '100%', maxHeight: '200px', borderRadius: '4px', border: '1px solid #ccc' }} />
+                </div>
+              </div>
+            )}
             <div className="form-group" style={{ marginBottom: '1rem' }}>
               <label className="form-label">Proof of Work (Required) 📸</label>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>

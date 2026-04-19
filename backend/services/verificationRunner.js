@@ -229,9 +229,23 @@ async function runStages4567({
   const category = aiResult.category || 'Other';
 
   let visionForEmbed = { match: true, confidence: 0.75, detected: category };
+  let imageManip = { manipulated: false, score: 0 };
+  let textEmb = null;
 
+  // Parallelize independent AI/ML tasks
+  const aiTasks = [getEmbeddings(text)];
   if (image && image.startsWith('data:image')) {
-    visionForEmbed = await verifyImageContent(image, category);
+    aiTasks.push(verifyImageContent(image, category));
+    aiTasks.push(detectImageManipulation(image));
+  }
+
+  const aiResults = await Promise.all(aiTasks);
+  textEmb = aiResults[0];
+  
+  if (image && image.startsWith('data:image')) {
+    visionForEmbed = aiResults[1];
+    imageManip = aiResults[2];
+
     const conf = typeof visionForEmbed.confidence === 'number' ? visionForEmbed.confidence : 0.5;
     const match = visionForEmbed.match !== false;
     if (!match || conf < config.visionCategoryMismatchMaxConfidence) {
@@ -240,18 +254,17 @@ async function runStages4567({
       results.stage4.contribution = Math.max(5, results.stage4.contribution - 42);
     }
 
-    const manip = await detectImageManipulation(image);
-    if (manip.manipulated || (typeof manip.score === 'number' && manip.score > 0.65)) {
+    if (imageManip.manipulated || (typeof imageManip.score === 'number' && imageManip.score > 0.65)) {
       results.stage4.flags.push('image_manipulation_detected');
       flags.push('image_manipulation_detected');
       results.stage4.contribution = Math.max(5, results.stage4.contribution - 38);
     }
 
-    const textEmbStage = await getEmbeddings(text);
+    // Semantic contradiction check
     const labelStr = `Category: ${category}. Vision: ${visionForEmbed.detected || ''}`;
     const labelEmb = await getEmbeddings(labelStr);
-    if (textEmbStage && labelEmb) {
-      const sim = cosineSimilarity(textEmbStage, labelEmb);
+    if (textEmb && labelEmb) {
+      const sim = cosineSimilarity(textEmb, labelEmb);
       if (sim < config.semanticContradictionMinSimilarity) {
         results.stage4.flags.push('description_image_contradiction');
         flags.push('description_image_contradiction');
@@ -262,7 +275,6 @@ async function runStages4567({
     await estimateSceneLightingConsistency(image, new Date().toISOString());
   }
 
-  const textEmb = await getEmbeddings(text);
   const imageEmb = await embedImageProxyCaption(
     typeof visionForEmbed?.detected === 'string' ? visionForEmbed.detected : category
   );

@@ -27,6 +27,36 @@ export default function AdminDashboard() {
   const [escalateModal, setEscalateModal] = useState(null);
   const [escalateMsg, setEscalateMsg] = useState('');
   const [escalating, setEscalating] = useState(false);
+  const [expandedRows, setExpandedRows] = useState({});
+  const [fraudInfo, setFraudInfo] = useState({ total: 0, flagged: 0 });
+
+  const toggleExpand = (id) => {
+    setExpandedRows(prev => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const getFraudBadgeStyle = (status, score) => {
+    const match = 100 - (score || 0);
+    if (status === 'Flagged' || match < 40) return {
+      background: 'rgba(239,68,68,0.1)', color: '#dc2626', border: '1px solid rgba(239,68,68,0.25)'
+    };
+    if (status === 'Suspicious' || match < 70) return {
+      background: 'rgba(245,158,11,0.1)', color: '#d97706', border: '1px solid rgba(245,158,11,0.25)'
+    };
+    return { background: 'rgba(16,185,129,0.1)', color: '#059669', border: '1px solid rgba(16,185,129,0.25)' };
+  };
+
+  const getMatchLabel = (status) => {
+    if (status === 'Flagged') return '⚠ Review';
+    if (status === 'Suspicious') return '~ Suspect';
+    return '✓ Clear';
+  };
+
+  const getFraudBarColor = (score) => {
+    const match = 100 - score;
+    if (match <= 39) return 'linear-gradient(90deg, #ef4444, #dc2626)';
+    if (match <= 69) return 'linear-gradient(90deg, #f59e0b, #d97706)';
+    return 'linear-gradient(90deg, #10b981, #059669)';
+  };
 
   const token = localStorage.getItem('token');
   const headers = { Authorization: `Bearer ${token}` };
@@ -62,6 +92,10 @@ export default function AdminDashboard() {
       // Sort by newest answer first
       replies.sort((a, b) => new Date(b.answeredAt) - new Date(a.answeredAt));
       setNotifications(replies);
+
+      // Compute global fraud ratio
+      const totalFlagged = allComplaints.filter(c => c.fraudStatus === 'Flagged').length;
+      setFraudInfo({ total: allComplaints.length, flagged: totalFlagged });
     } catch (error) {
       alert('Error fetching admin data.');
     } finally {
@@ -168,18 +202,25 @@ export default function AdminDashboard() {
         </div>
 
         {/* Global Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '2.5rem' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '1rem', marginBottom: '2.5rem' }}>
           <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: '4px solid var(--primary)' }}>
-            <div style={{ fontSize: '2.25rem', fontWeight: '700', color: 'var(--primary)' }}>{totalComplaints}</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Total Complaints</div>
+            <div style={{ fontSize: '2.25rem', fontWeight: '800', color: 'var(--primary)', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>{totalComplaints}</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.2rem' }}>Total Complaints</div>
           </div>
           <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: '4px solid #059669' }}>
-            <div style={{ fontSize: '2.25rem', fontWeight: '700', color: '#059669' }}>{totalResolved}</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Resolved</div>
+            <div style={{ fontSize: '2.25rem', fontWeight: '800', color: '#059669', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>{totalResolved}</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.2rem' }}>Resolved</div>
           </div>
           <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: `4px solid ${totalOverdue > 0 ? '#dc2626' : '#059669'}` }}>
-            <div style={{ fontSize: '2.25rem', fontWeight: '700', color: totalOverdue > 0 ? '#dc2626' : '#059669' }}>{totalOverdue}</div>
-            <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontWeight: '500' }}>Overdue (&gt;7 days)</div>
+            <div style={{ fontSize: '2.25rem', fontWeight: '800', color: totalOverdue > 0 ? '#dc2626' : '#059669', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>{totalOverdue}</div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.2rem' }}>Overdue (&gt;1 day)</div>
+          </div>
+          <div className="glass-card dept-stat-card" style={{ padding: '1.25rem', textAlign: 'center', borderLeft: `4px solid ${fraudInfo.flagged > 0 ? '#f59e0b' : '#10b981'}` }}>
+            <div style={{ fontSize: '2.25rem', fontWeight: '800', color: fraudInfo.flagged > 0 ? '#f59e0b' : '#10b981', fontFamily: 'Plus Jakarta Sans, sans-serif' }}>
+              {fraudInfo.total > 0 ? Math.round((fraudInfo.flagged / fraudInfo.total) * 100) : 0}%
+            </div>
+            <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: '600', textTransform: 'uppercase', letterSpacing: '0.06em', marginTop: '0.2rem' }}>Fraud Flagged</div>
+            <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>{fraudInfo.flagged} of {fraudInfo.total}</div>
           </div>
         </div>
 
@@ -356,6 +397,7 @@ export default function AdminDashboard() {
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Citizen</th>
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Summary</th>
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Priority</th>
+                <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Image Analysis</th>
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Status</th>
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Days Open</th>
                 <th style={{ padding: '1rem', fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)' }}>Escalation</th>
@@ -363,95 +405,155 @@ export default function AdminDashboard() {
             </thead>
             <tbody>
               {complaints.length === 0 ? (
-                <tr><td colSpan="8" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>No complaints in this department.</td></tr>
+                <tr><td colSpan="9" style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>No complaints in this department.</td></tr>
               ) : complaints.map(c => {
                 const days = daysAgo(c.createdAt);
-                const isOverdue = days >= 7 && !['Resolved', 'Rejected', 'Merged'].includes(c.status);
+                const isOverdue = days >= 1 && !['Resolved', 'Rejected', 'Merged'].includes(c.status);
                 const hasEscalation = c.escalations && c.escalations.length > 0;
+                const isExpanded = expandedRows[c._id];
+                const score = typeof c.fraudScore === 'number' ? c.fraudScore : 0;
 
                 return (
-                  <tr key={c._id} style={{
-                    borderBottom: '1px solid var(--border)',
-                    background: isOverdue ? 'rgba(239, 68, 68, 0.03)' : 'transparent',
-                    transition: 'background 0.15s'
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = isOverdue ? 'rgba(239, 68, 68, 0.06)' : 'rgba(79, 70, 229, 0.03)'}
-                  onMouseLeave={e => e.currentTarget.style.background = isOverdue ? 'rgba(239, 68, 68, 0.03)' : 'transparent'}>
-                    <td style={{ padding: '0.85rem 1rem', fontWeight: '600', fontSize: '0.8rem', fontFamily: 'monospace' }}>{c.trackingId}</td>
-                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>
-                      {new Date(c.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
-                    </td>
-                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{c.name || c.user?.name || 'Anonymous'}</td>
-                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                      {c.summary || c.complaintText?.substring(0, 80)}
-                    </td>
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      <span style={{ fontSize: '0.75rem', fontWeight: '600', color: c.priority === 'High' ? '#dc2626' : c.priority === 'Medium' ? '#d97706' : '#059669' }}>
-                        {c.priority}
-                      </span>
-                    </td>
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      <span style={{
-                        padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '600',
-                        ...statusBadge(c.status)
-                      }}>
-                        {c.status}
-                      </span>
-                      {c.resolvedAt && c.status === 'Resolved' && (
-                        <div style={{ fontSize: '0.65rem', color: '#059669', marginTop: '0.2rem' }}>
-                          Resolved: {new Date(c.resolvedAt).toLocaleDateString('en-IN')}
-                        </div>
-                      )}
-                      {c.resolutionImage && c.status === 'Resolved' && (
-                        <div style={{ marginTop: '0.4rem' }}>
-                          <button 
-                            style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', border: '1px solid #10b981', color: '#10b981', background: 'transparent', borderRadius: '4px', cursor: 'pointer' }}
-                            onClick={() => {
-                              const win = window.open("");
-                              win.document.write(`<img src="${c.resolutionImage}" style="max-width:100%; height:auto;" alt="Proof of Work" />`);
-                            }}
-                          >
-                            📸 View Proof
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', fontWeight: '600' }}>
-                      {c.status === 'Resolved' ? (
-                        <span style={{ color: '#059669' }}>—</span>
-                      ) : (
-                        <span style={{ color: isOverdue ? '#dc2626' : 'var(--text-main)' }}>
-                          {days}d {isOverdue && '🔴'}
+                  <React.Fragment key={c._id}>
+                    <tr style={{
+                      borderBottom: isExpanded ? 'none' : '1px solid var(--border)',
+                      background: isOverdue ? 'rgba(239, 68, 68, 0.03)' : 'transparent',
+                      transition: 'background 0.15s'
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = 'rgba(79,70,229,0.04)'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                      <td style={{ padding: '0.85rem 1rem', fontWeight: '600', fontSize: '0.8rem', fontFamily: 'monospace' }}>{c.trackingId}</td>
+                      <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>
+                        {new Date(c.createdAt).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem' }}>{c.name || c.user?.name || 'Anonymous'}</td>
+                      <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', maxWidth: '250px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                        {c.summary || c.complaintText?.substring(0, 80)}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <span style={{ fontSize: '0.75rem', fontWeight: '600', color: c.priority === 'High' ? '#dc2626' : c.priority === 'Medium' ? '#d97706' : '#059669' }}>
+                          {c.priority}
                         </span>
-                      )}
-                    </td>
-                    <td style={{ padding: '0.85rem 1rem' }}>
-                      {isOverdue ? (
-                        <div>
-                          <button
-                            className="btn escalate-btn"
-                            onClick={() => setEscalateModal(c)}
-                            style={{
-                              background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
-                              color: 'white', padding: '0.3rem 0.65rem', fontSize: '0.7rem',
-                              border: 'none', borderRadius: '6px', fontWeight: '600'
-                            }}
-                          >
-                            ⚠ Raise Question
-                          </button>
-                          {hasEscalation && (
-                            <div style={{ fontSize: '0.65rem', color: '#d97706', marginTop: '0.25rem' }}>
-                              {c.escalations.length} escalation{c.escalations.length > 1 ? 's' : ''} raised
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', minWidth: '130px' }}>
+                        {typeof c.fraudScore === 'number' ? (() => {
+                          const match = 100 - score;
+                          const badgeStyle = getFraudBadgeStyle(c.fraudStatus, score);
+                          const barColor = getFraudBarColor(score);
+                          return (
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                <span style={{
+                                  display: 'inline-block', padding: '0.15rem 0.5rem',
+                                  borderRadius: '999px', fontSize: '0.68rem', fontWeight: '700',
+                                  whiteSpace: 'nowrap', letterSpacing: '0.02em', ...badgeStyle
+                                }}>
+                                  {getMatchLabel(c.fraudStatus)}
+                                </span>
+                                <span style={{ fontSize: '0.75rem', fontWeight: '700', color: 'var(--text-main)', marginLeft: 'auto' }}>
+                                  {match}%
+                                </span>
+                              </div>
+                              <div style={{ height: '5px', borderRadius: '99px', background: 'var(--border)', overflow: 'hidden' }}>
+                                <div style={{ height: '100%', width: `${match}%`, background: barColor, borderRadius: '99px', transition: 'width 0.6s ease' }} />
+                              </div>
+                              <button
+                                style={{ background: 'none', border: 'none', color: 'var(--primary)', fontSize: '0.68rem', cursor: 'pointer', textDecoration: 'underline', textAlign: 'left', padding: 0, opacity: 0.8 }}
+                                onClick={() => toggleExpand(c._id)}
+                              >
+                                {isExpanded ? '▲ Hide' : '▼ Details'}
+                              </button>
                             </div>
-                          )}
-                        </div>
-                      ) : c.status === 'Resolved' ? (
-                        <span style={{ fontSize: '0.75rem', color: '#059669' }}>✅</span>
-                      ) : (
-                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Not yet eligible</span>
-                      )}
-                    </td>
-                  </tr>
+                          );
+                        })() : (
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>—</span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        <span style={{
+                          padding: '0.2rem 0.6rem', borderRadius: '999px', fontSize: '0.7rem', fontWeight: '600',
+                          ...statusBadge(c.status)
+                        }}>
+                          {c.status}
+                        </span>
+                        {c.resolvedAt && c.status === 'Resolved' && (
+                          <div style={{ fontSize: '0.65rem', color: '#059669', marginTop: '0.2rem' }}>
+                            Resolved: {new Date(c.resolvedAt).toLocaleDateString('en-IN')}
+                          </div>
+                        )}
+                        {c.resolutionImage && c.status === 'Resolved' && (
+                          <div style={{ marginTop: '0.4rem' }}>
+                            <button 
+                              style={{ fontSize: '0.65rem', padding: '0.15rem 0.4rem', border: '1px solid #10b981', color: '#10b981', background: 'transparent', borderRadius: '4px', cursor: 'pointer' }}
+                              onClick={() => {
+                                const win = window.open("");
+                                win.document.write(`<img src="${c.resolutionImage}" style="max-width:100%; height:auto;" alt="Proof of Work" />`);
+                              }}
+                            >
+                              📸 View Proof
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem', fontSize: '0.85rem', fontWeight: '600' }}>
+                        {c.status === 'Resolved' ? (
+                          <span style={{ color: '#059669' }}>—</span>
+                        ) : (
+                          <span style={{ color: isOverdue ? '#dc2626' : 'var(--text-main)' }}>
+                            {days}d {isOverdue && '🔴'}
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '0.85rem 1rem' }}>
+                        {isOverdue ? (
+                          <div>
+                            <button
+                              className="btn escalate-btn"
+                              onClick={() => setEscalateModal(c)}
+                              style={{
+                                background: 'linear-gradient(135deg, #dc2626, #b91c1c)',
+                                color: 'white', padding: '0.3rem 0.65rem', fontSize: '0.7rem',
+                                border: 'none', borderRadius: '6px', fontWeight: '600'
+                              }}
+                            >
+                              ⚠ Raise Question
+                            </button>
+                            {hasEscalation && (
+                              <div style={{ fontSize: '0.65rem', color: '#d97706', marginTop: '0.25rem' }}>
+                                {c.escalations.length} escalation{c.escalations.length > 1 ? 's' : ''} raised
+                              </div>
+                            )}
+                          </div>
+                        ) : c.status === 'Resolved' ? (
+                          <span style={{ fontSize: '0.75rem', color: '#059669' }}>✅</span>
+                        ) : (
+                          <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>Not yet eligible</span>
+                        )}
+                      </td>
+                    </tr>
+                    {isExpanded && (
+                      <tr style={{ borderBottom: '1px solid var(--border)', background: 'rgba(0,0,0,0.01)' }}>
+                        <td colSpan="9" style={{ padding: '0' }}>
+                          <div className="fraud-panel animate-fade-in" style={{ padding: '1rem 2rem' }}>
+                            <strong style={{ fontSize: '0.85rem', display: 'block', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
+                              🔍 AI Analysis — {100 - score}% visual match
+                            </strong>
+                            {(c.fraudReasons || []).length > 0 ? (
+                              <ul>
+                                {c.fraudReasons.map((reason, i) => (
+                                  <li key={i} className={reason.startsWith('[AI]') || reason.startsWith('[IMAGE]') || reason.startsWith('[SEMANTIC]') ? 'ai-signal' : ''}>
+                                    {reason}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>✅ No suspicious patterns detected.</p>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 );
               })}
             </tbody>

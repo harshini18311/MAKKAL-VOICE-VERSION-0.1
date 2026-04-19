@@ -36,9 +36,9 @@ const DEPARTMENT_ROUTING = {
 
 const SEVERITY_RESOLUTION_MAP = {
   Critical: 1,
-  High: 3,
-  Medium: 7,
-  Low: 14
+  High: 1,
+  Medium: 1,
+  Low: 3
 };
 
 const CLASSIFICATION_SYSTEM_PROMPT = `You are an expert Indian civic complaint classification agent.
@@ -49,7 +49,7 @@ Given a structured complaint, analyze it and return a STRICT JSON object with th
   "severity": "One of: Critical, High, Medium, Low",
   "department": "The department name that should handle this",
   "departmentCode": "Short code: WTR, ROD, ELC, INF, PUB, SAN, TRF, GOV, RUR, HSG, DIS, ANM, EDU, AMN, LND, DOC, ENV, MKT, WCS, TEL, or NA",
-  "estimatedResolutionDays": "Integer: 1 for Critical, 3 for High, 7 for Medium, 14 for Low",
+  "estimatedResolutionDays": "Integer: 1 for Critical/High/Medium, 3 for Low",
   "summaryEnglish": "A clear 1-2 sentence summary in English",
   "formalEmailDraft": "A professional formal complaint email in English (see format below)"
 }
@@ -136,7 +136,19 @@ function normalizeClassification(raw, structuredData) {
   ];
   const validSeverities = ['Critical', 'High', 'Medium', 'Low'];
 
-  const category = validCategories.includes(raw.category) ? raw.category : 'Irrelevant';
+  let category = validCategories.includes(raw.category) ? raw.category : 'Irrelevant';
+  
+  // OVERRIDE: If LLM says "Irrelevant", check for regional keywords in BOTH original and translated text
+  if (category === 'Irrelevant') {
+    const combinedText = ` ${structuredData.issue_en} ${structuredData.issue_original} `.toLowerCase();
+    if (/தண்ணீர்|குழாய்|பைப்|water|drain|pipe|tap|irrigation/.test(combinedText)) category = 'Water';
+    else if (/சாலை|ரோடு|குழி|road|pothole|street|transport/.test(combinedText)) category = 'Road';
+    else if (/மின்சாரம்|கரண்ட்|electric|power|wire|transformer/.test(combinedText)) category = 'Electricity';
+    else if (/குப்பை|சாக்கடை|garbage|sewage|toilet|dirty|sanitation/.test(combinedText)) category = 'Sanitation';
+    else if (/கட்டிடம்|infra|light|building|construction/.test(combinedText)) category = 'Infrastructure';
+    else if (category === 'Irrelevant' && combinedText.trim().length > 10) category = 'Government Services';
+  }
+
   const severity = validSeverities.includes(raw.severity) ? raw.severity : 'Medium';
   const dept = DEPARTMENT_ROUTING[category] || DEPARTMENT_ROUTING['Government Services'];
 
@@ -146,7 +158,7 @@ function normalizeClassification(raw, structuredData) {
     department: dept.name,
     departmentCode: dept.code,
     departmentEmail: dept.email,
-    estimatedResolutionDays: SEVERITY_RESOLUTION_MAP[severity] || 7,
+    estimatedResolutionDays: SEVERITY_RESOLUTION_MAP[severity] || 1,
     summaryEnglish: raw.summaryEnglish || raw.summary || structuredData.issue_en?.substring(0, 150) || '',
     formalEmailDraft: raw.formalEmailDraft || buildFallbackEmail(structuredData, category)
   };
@@ -154,34 +166,32 @@ function normalizeClassification(raw, structuredData) {
 
 /**
  * Keyword-based heuristic classifier (fallback when no LLM available).
+ * Now supports Tamil keywords.
  */
 function heuristicClassify(structuredData) {
-  const text = (structuredData.issue_en || '').toLowerCase();
-  const name = structuredData.name_en || 'Resident';
-  const location = structuredData.address_en || 'the locality';
+  const textEn = (structuredData.issue_en || '').toLowerCase();
+  const textOrig = (structuredData.issue_original || '').toLowerCase();
+  const text = ` ${textEn} ${textOrig} `;
 
   let category = 'Irrelevant';
-  if (/water|drain|pipe|tap|irrigation|flood|leakage|contaminated/.test(text)) category = 'Water';
-  else if (/road|pothole|street|transport|highway|bridge/.test(text)) category = 'Road';
-  else if (/electric|power|wire|transformer|voltage|outage/.test(text)) category = 'Electricity';
-  else if (/garbage|sewage|toilet|mosquito|dirty|sanitation|waste/.test(text)) category = 'Sanitation';
-  else if (/traffic|signal|parking|congestion/.test(text)) category = 'Traffic';
-  else if (/light|building|infrastructure|construction/.test(text)) category = 'Infrastructure';
-  else if (/government|corruption|bribe|delay|official/.test(text)) category = 'Government Services';
-  else if (/farm|crop|rural|cattle|animal|stray/.test(text)) category = 'Rural specific';
-  else if (/cyclone|landslide|rescue|disaster|emergency/.test(text)) category = 'Disaster & Emergency';
-  else if (/danger|accident|safe|collapse|hazard/.test(text)) category = 'Public Safety';
-  else if (/slum|housing|eviction|encroachment|resettlement/.test(text)) category = 'Housing & Slum Issues';
-  else if (/dog|monkey|snake|wildlife|cruelty/.test(text)) category = 'Animal & Wildlife Issues';
-  else if (/school|teacher|education|midday|student/.test(text)) category = 'Education Infrastructure';
-  else if (/park|bus stop|bench|shelter|amenity/.test(text)) category = 'Public Amenities';
-  else if (/patta|land|dispute|grab|survey/.test(text)) category = 'Revenue & Land Issues';
-  else if (/aadhaar|ration|certificate|birth|death|name correction/.test(text)) category = 'Documentation & Certificates';
-  else if (/pollution|air|noise|tree|environment/.test(text)) category = 'Environment & Pollution';
-  else if (/price|overprice|market|quality|black market/.test(text)) category = 'Market & Price Issues';
-  else if (/women|child|harass|safety|missing|labor/.test(text)) category = 'Women & Child Safety';
-  else if (/mobile|signal|internet|telecom|tower|network/.test(text)) category = 'Digital & Telecom Issues';
-  else category = 'Irrelevant';
+  
+  // Water
+  if (/water|drain|pipe|tap|irrigation|flood|leakage|தண்ணீர்|குழாய்|பைப்|கால்வாய்|கழிவுநீர்/.test(text)) category = 'Water';
+  // Road
+  else if (/road|pothole|street|transport|highway|bridge|சாலை|ரோடு|குழி|பாதை/.test(text)) category = 'Road';
+  // Electricity
+  else if (/electric|power|wire|transformer|voltage|outage|மின்சாரம்|கரண்ட்|ஒயர்|லைட்/.test(text)) category = 'Electricity';
+  // Sanitation
+  else if (/garbage|sewage|toilet|mosquito|dirty|sanitation|waste|குப்பை|சாக்கடை|நாய்|கழிவு/.test(text)) category = 'Sanitation';
+  // Traffic
+  else if (/traffic|signal|parking|congestion|போக்குவரத்து/.test(text)) category = 'Traffic';
+  // Infrastructure
+  else if (/light|building|infrastructure|construction|கட்டிடம்|பாலம்|சுவர்/.test(text)) category = 'Infrastructure';
+  // Rural specific
+  else if (/farm|crop|rural|cattle|animal|stray|விவசாயம்|பயிர்|மாடு/.test(text)) category = 'Rural specific';
+  // Government Services
+  else if (/government|corruption|bribe|delay|official|அரசு|ஊழல்|தாமதம்/.test(text)) category = 'Government Services';
+  else if (text.trim().length > 15) category = 'Government Services'; // Final catch-all for long valid text
 
   let severity = 'Medium';
   if (/flood|danger|collapse|hazard|contaminated|accident|fire|death|immediate/.test(text)) severity = 'Critical';
@@ -196,7 +206,7 @@ function heuristicClassify(structuredData) {
     department: dept.name,
     departmentCode: dept.code,
     departmentEmail: dept.email,
-    estimatedResolutionDays: SEVERITY_RESOLUTION_MAP[severity] || 7,
+    estimatedResolutionDays: SEVERITY_RESOLUTION_MAP[severity] || 1,
     summaryEnglish: text.length > 100 ? text.substring(0, 97) + '...' : text,
     formalEmailDraft: buildFallbackEmail(structuredData, category)
   };

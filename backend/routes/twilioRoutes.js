@@ -302,7 +302,7 @@ router.all('/process-complaint', async (req, res) => {
       trackingId,
       status: 'Pending',
       severity: classification.severity || 'Medium',
-      estimatedResolutionDays: classification.estimatedResolutionDays || 7,
+      estimatedResolutionDays: classification.estimatedResolutionDays || 1,
       department: classification.department,
       departmentCode: classification.departmentCode || 'GEN',
       callerPhone: session.callerPhone,
@@ -327,7 +327,7 @@ router.all('/process-complaint', async (req, res) => {
     twilioSessions.delete(callSid);
 
     const spokenId = trackingId.split('').join(' ');
-    const successMsg = prompts.success(spokenId, classification.department || 'relevant department', classification.estimatedResolutionDays || 7);
+    const successMsg = prompts.success(spokenId, classification.department || 'relevant department', classification.estimatedResolutionDays || 1);
     
     const xml = twiml(r => r.say(successMsg));
     res.type('application/xml').send(xml);
@@ -435,7 +435,7 @@ router.post('/web-submit-complaint', express.json(), async (req, res) => {
       trackingId,
       status: 'Pending',
       severity: classification.severity || 'Medium',
-      estimatedResolutionDays: classification.estimatedResolutionDays || 7,
+      estimatedResolutionDays: classification.estimatedResolutionDays || 1,
       department: classification.department,
       departmentCode: classification.departmentCode || 'GEN',
       callerPhone: 'web-browser',
@@ -473,7 +473,7 @@ router.post('/web-submit-complaint', express.json(), async (req, res) => {
       trackingId,
       department: classification.department,
       severity: classification.severity,
-      estimatedDays: classification.estimatedResolutionDays || 7,
+      estimatedDays: classification.estimatedResolutionDays || 1,
       category: classification.category || 'Other',
       priority: classification.severity === 'Critical' || classification.severity === 'High' ? 'High' : 'Medium',
       summary: classification.summaryEnglish || req.body.issue

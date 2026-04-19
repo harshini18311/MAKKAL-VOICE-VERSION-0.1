@@ -9,54 +9,58 @@ async function translateToEnglish(text) {
       response.data[0].forEach(item => {
         if (item[0]) translatedText += item[0];
       });
+      console.log(`[TRANSLATE] "${text.substring(0, 30)}..." -> "${translatedText.substring(0, 30)}..."`);
       return translatedText;
     }
+    console.warn(`[TRANSLATE] No translation results for: "${text.substring(0, 30)}..."`);
     return text;
   } catch (err) {
-    console.error("Translation API error:", err.message);
+    console.error("[TRANSLATE] Error:", err.message);
     return text;
   }
 }
 
 async function analyzeComplaint(text, name = "Resident", location = "the locality") {
-  // Normalize ANY language transparently to English
-  const englishText = await translateToEnglish(text);
-  const englishName = await translateToEnglish(name);
-  const englishLocation = await translateToEnglish(location);
+  // Normalize ANY language transparently to English in parallel
+  const [englishText, englishName, englishLocation] = await Promise.all([
+    translateToEnglish(text),
+    translateToEnglish(name),
+    translateToEnglish(location)
+  ]);
+
+  // SPECIAL: Pre-classification for Tamil/Regional if the LLM or translation is being too strict
+  const lowerOrig = text.toLowerCase();
+  const regionalKeywords = {
+    Water: ['தண்ணீர்', 'குழாய்', 'பைப்', 'கால்வாய்', 'குடிநீர்', 'தண்ணி', 'வாட்டர்', 'குடி', 'கழிவுநீர்'],
+    Road: ['சாலை', 'ரோடு', 'குழி', 'போக்குவரத்து', 'பாதை', 'தார்', 'தெரு'],
+    Sanitation: ['குப்பை', 'சாக்கடை', 'நாய்', 'கழிவு', 'அசுத்தம்', 'கிளீன்', 'சுத்தம்', 'மலம்'],
+    Electricity: ['மின்சாரம்', 'கரண்ட்', 'மின் விளக்கு', 'லைட்', 'ஒயர்', 'பவர்', 'மின்பாதை', 'டிரான்ஸ்பார்மர்'],
+    Infrastructure: ['கட்டிடம்', 'பாலம்', 'சுவர்', 'சேதம்', 'இடிந்து']
+  };
+
+  let preCategory = null;
+  for (const [cat, keywords] of Object.entries(regionalKeywords)) {
+    if (keywords.some(k => lowerOrig.includes(k))) {
+      preCategory = cat;
+      break;
+    }
+  }
 
   const prompt = `
-  You are an AI assistant analyzing rural civic complaints.
+  You are an AI assistant analyzing rural civic complaints in India.
+  The input might be an English translation of a Tamil/regional voice complaint.
   Read the following complaint and output a pure JSON object with these keys:
   - "category": One of ["Water", "Road", "Electricity", "Infrastructure", "Public Safety", "Sanitation", "Traffic", "Government Services", "Rural specific", "Irrelevant"].
   - "priority": One of ["Low", "Medium", "High"].
   - "summary": A short 1-2 sentence summary in English.
   - "emailDraft": A professional formal email. 
 
-  CRITICAL INSTRUCTION: If the complaint text is nonsensical (random letters, "vdhbjd..."), completely off-topic (greetings, non-civic chat), or entirely unclear, you MUST classify "category" as "Irrelevant".
-
-  CATEGORIZATION GUIDUANCE:
-  - Valid civic issues (e.g., "broken street light", "garbage disposal") MUST match one of the main categories or use "Government Services" as a fallback for general civic needs.
-  - Gibberish, keyboard smashing, or "test" messages MUST be classified as "Irrelevant".
-
-  EXAMPLES:
-  1. "vdhbjdddddd" → {"category": "Irrelevant", ...}
-  2. "bcfcfvgbhj" → {"category": "Irrelevant", ...}
-  3. "hello" → {"category": "Irrelevant", ...}
-  4. "the road has a big pothole" → {"category": "Road", ...}
-  5. "no water in our tank for 3 days" → {"category": "Water", ...}
-
-  IMPORTANT: The entire email draft MUST be in English. 
-  Do NOT translate the email content, especially the closing "Yours sincerely," into any other language.
-  Follow this EXACT format for the emailDraft field:
-  Respected Sir/Madam,
-  I am writing to bring to your kind attention a serious issue faced by the residents of ${englishLocation}.
-  We are currently facing the problem of [DESCRIBE ISSUE], which has been causing significant inconvenience in our daily lives. This issue has persisted for some time and has not yet been resolved despite affecting many people in the locality.
-  Due to this problem, residents are experiencing difficulties such as [IMPACT]. Immediate action is required to prevent further complications.
-  I kindly request you to look into this matter and take necessary steps to resolve it at the earliest. Your prompt action will be greatly appreciated by all residents of the area.
-  Thank you for your attention to this matter.
-  Yours sincerely,
-  ${englishName}
-  ${englishLocation}
+  CRITICAL INSTRUCTIONS:
+  1. If the complaint is a valid civic issue (potholes, water shortage, garbage, street lights, etc.), you MUST categorize it correctly. Do NOT use "Irrelevant" for valid short complaints.
+  2. "Road not good" or "No water" are VALID complaints.
+  3. Only use "Irrelevant" for complete gibberish (e.g., "ajksdhakjsdh"), random numbers, or totally unrelated text (e.g., "how are you").
+  4. If you see keywords like "road", "water", "trash", "light", even in short sentences, classify them accordingly.
+  ${preCategory ? `5. NOTE: This complaint has been pre-flagged as potentially relating to "${preCategory}". Verify this.` : ''}
 
   Complaint: "${englishText}"
   `;
@@ -70,28 +74,60 @@ async function analyzeComplaint(text, name = "Resident", location = "the localit
     });
 
     if (response.data && response.data.response) {
-      // It should be JSON already if format: 'json' is supported, or we parse it
-      return JSON.parse(response.data.response);
+      const parsed = JSON.parse(response.data.response);
+      console.log('[DEBUG] LLM raw response:', parsed);
+      
+      // OVERRIDE: If the LLM says Irrelevant but our keyword pre-classification found a valid category, trust the keywords.
+      if (parsed.category === 'Irrelevant' && preCategory) {
+        console.log(`[AI OVERRIDE] LLM said Irrelevant, but Tamil keywords found: ${preCategory}`);
+        parsed.category = preCategory;
+        if (!parsed.priority || parsed.priority === 'Low') parsed.priority = 'Medium';
+      }
+      
+      return parsed;
     }
     throw new Error("Invalid response from model");
   } catch (error) {
     console.error('AI Processing Error:', error.message);
+    
+    // Fallback: If model is down OR pre-classification exists, use it!
+    if (preCategory) {
+      console.log(`[FALLBACK] Using pre-classification for category: ${preCategory}`);
+      return {
+        category: preCategory,
+        priority: 'Medium',
+        summary: englishText.substring(0, 100),
+        emailDraft: `Respected Sir/Madam,\n\nI am writing regarding a ${preCategory} issue: ${englishText}.`
+      };
+    }
     // Smart Fallback if local model is not running
     const lower = englishText.toLowerCase();
     let category = 'Irrelevant';
     
-    // Simple Gibberish Filter: repetitive characters or very strange consonant clusters
-    const isGibberish = /(.)\1{3,}/.test(lower) || /[^aeiouy\s]{6,}/.test(lower);
+    // Simple Gibberish Filter: Only apply "consonant-heavy" check to Latin text
+    const isLatin = /^[a-z0-9\s.,!?-]+$/i.test(englishText);
+    const isGibberish = isLatin 
+      ? (/(.)\1{4,}/.test(lower) || /[^aeiouy\s]{8,}/.test(lower))
+      : (/(.)\1{6,}/.test(lower)); // More lenient for Non-Latin scripts (fallback)
     
     if (!isGibberish) {
+      // English keywords
       if (lower.includes('water') || lower.includes('drain') || lower.includes('pipe') || lower.includes('tap') || lower.includes('irrigation')) category = 'Water';
       else if (lower.includes('road') || lower.includes('street') || lower.includes('pothole') || lower.includes('transport') || lower.includes('traffic') || lower.includes('parking')) category = 'Road';
       else if (lower.includes('electric') || lower.includes('power') || lower.includes('wire') || lower.includes('transformer')) category = 'Electricity';
       else if (lower.includes('garbage') || lower.includes('sewage') || lower.includes('dog') || lower.includes('animal') || lower.includes('toilet') || lower.includes('mosquito') || lower.includes('dirty')) category = 'Sanitation';
-      else if (lower.includes('light') || lower.includes('building') || lower.includes('infrastructure')) category = 'Infrastructure';
+      
+      // Tamil keywords (fallback if translation is weak)
+      else if (lower.includes('தண்ணீர்') || lower.includes('குழாய்') || lower.includes('பைப்') || lower.includes('கால்வாய்')) category = 'Water';
+      else if (lower.includes('சாலை') || lower.includes('ரோடு') || lower.includes('குழி') || lower.includes('போக்குவரத்து')) category = 'Road';
+      else if (lower.includes('மின்சாரம்') || lower.includes('கரண்ட்') || lower.includes('மின் விளக்கு') || lower.includes('மின்பாதை')) category = 'Electricity';
+      else if (lower.includes('குப்பை') || lower.includes('சாக்கடை') || lower.includes('நாய்') || lower.includes('கழிவு')) category = 'Sanitation';
+
+      // General fallbacks
       else if (lower.includes('government') || lower.includes('corruption') || lower.includes('bribe') || lower.includes('delay') || lower.includes('problem') || lower.includes('help')) category = 'Government Services';
       else if (lower.includes('farm') || lower.includes('crop') || lower.includes('rural')) category = 'Rural specific';
       else if (lower.includes('safety') || lower.includes('safe') || lower.includes('crossing') || lower.includes('accident')) category = 'Public Safety';
+      else if (lower.includes('light') || lower.includes('building') || lower.includes('infrastructure')) category = 'Infrastructure';
     }
     
     let priority = 'Medium';
